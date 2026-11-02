@@ -391,6 +391,9 @@ def _rules_block(root: Path) -> str:
 def _announce_rules(root: Path, changed: bool) -> None:
     """把当前注入层打到输出：本会话内 AGENTS.md 注入的还是旧内容，新规则经工具输出立即进上下文。"""
     rules, warns = _collect_rules(root)
+    agents = root / "AGENTS.md"
+    if agents.exists() and re.search(r"(?m)^##\s*规则", _RULES_PAT.sub("", read_text(agents))):
+        print("[规则] 注意：标记块外还存在手写「规则」节，会与编译块并存；建议并入 rules/ 源文件后删除")
     always = [r for r in rules if "always" in r["scopes"] and r["body"]]
     print(f"[规则] AGENTS.md「规则」节{'已重编译' if changed else '已是最新'}。当前注入层：")
     if always:
