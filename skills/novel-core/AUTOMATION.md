@@ -7,7 +7,7 @@
 **用户只说意图，agent 完成所有操作**：
 - 用户说"写第 N 章"→ agent 自动读上下文、生成章纲、写正文、检查、保存、同步 memory
 - 用户说"审稿"→ agent 自动跑 lint、核对设定、检查伏笔、生成报告
-- 用户说"定稿"→ agent 自动同步 7 个地方、更新进度
+- 用户说"定稿"→ agent 自动同步 8 个地方（含 git 暂存）、更新进度
 
 不需要用户：
 - 手动运行 `python3 novel.py lint`
@@ -333,6 +333,45 @@ Agent：扫描 chapters/vol01/ → 发现 30 章
       - 卷级问题（伏笔遗忘、配角失踪、节奏平淡段）
 ```
 
+### 10. Git 版本管理
+
+环境有 git 就自动启用，没有就静默跳过（不提示安装、不打断流程）。核心规则：**暂存自动做，提交必须问**——`git add` 廉价可逆，commit 产生历史，要用户点头。
+
+#### 建仓（任何建书流程收尾时：novel-init / novel-import）
+
+```python
+def auto_init_repo(root):
+    if not shutil.which("git"):
+        return                      # 没装 git，跳过
+    if subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
+                      cwd=root, capture_output=True).returncode == 0:
+        return                      # 已在某个仓库内，不嵌套建仓
+    subprocess.run(["git", "init"], cwd=root)
+    # .gitignore 由 novel.py init 播种（排除 drafts/）
+    subprocess.run(["git", "add", "-A"], cwd=root)
+    if 问用户("Git 仓库已建好并暂存全部文件，要做初始提交吗？"):
+        git commit -m "init: 建书骨架"      # 默认消息，用户可改
+```
+
+#### 定稿暂存（novel-chapter 定稿规程第 8 步）
+
+memory 同步完成后：
+
+```python
+def auto_stage(root, 章号, 章名):
+    if not 书根目录是 git 仓库:
+        return
+    subprocess.run(["git", "add", "-A"], cwd=root)   # 正文 + memory + outline + 新 lore 全暂存
+    files = git diff --cached --name-only
+    展示(f"已暂存 {len(files)} 个文件")
+    if 问用户("要提交吗？"):
+        git commit -m f"第{章号}章《{章名}》定稿"   # 用户可改消息
+```
+
+- **批量写多章**：逐章定稿照常暂存，全部写完后**只问一次**，一个提交覆盖这批章（消息如"第 N-M 章定稿"）。
+- **改稿、番外**定稿走同一规则，消息对应改写（"改稿第 N 章""番外 0019c 定稿"）。
+- 用户不提交就留在暂存区，下次暂存自然叠加；攒不攒着提交由用户决定，agent 不擅自 commit。
+
 ## 实现检查清单
 
 Agent 每次操作时，内心检查：
@@ -357,6 +396,7 @@ Agent 每次操作时，内心检查：
 - ☑ 展示提取结果让用户确认
 - ☑ 批量更新 7 个地方
 - ☑ 追加 state 历史快照
+- ☑ git 暂存本次变更并询问是否提交（有仓库时）
 
 **建设定时**：
 - ☑ 检查重名、冲突

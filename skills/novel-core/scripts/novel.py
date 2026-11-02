@@ -37,6 +37,7 @@ DIRS = (
 )
 # 目标路径 -> 模板文件名
 SEEDS = {
+    ".gitignore": "gitignore",
     "AGENTS.md": "AGENTS.md",
     "outline/synopsis.md": "synopsis.md",
     "outline/volumes/vol01.md": "volume.md",

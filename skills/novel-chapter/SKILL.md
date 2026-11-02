@@ -60,7 +60,7 @@ AGENTS.md（已注入）→ 本卷卷纲 → 是否已有章纲（有就读、�
 
 保存到 `chapters/volNN/NNNN-章名.txt` → 生成报告 → 问用户"定稿/修改"。
 
-用户确认定稿后，批量更新 memory/（7 个地方，见 novel-core 规程），追加 state 历史快照，不需要用户手动编辑任何 markdown。
+用户确认定稿后，批量更新 memory/（7 个地方，见 novel-core 规程），追加 state 历史快照，不需要用户手动编辑任何 markdown。项目在 git 仓库内时自动 `git add -A` 暂存本次变更，然后问"要提交吗"（提交必问，暂存自动；见 novel-core/AUTOMATION.md「Git 版本管理」）。
 
 ## 互动模式（剧情扮演）
 

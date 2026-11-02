@@ -134,10 +134,11 @@ memory/
 ```
 
 用户确认后：
-1. 运行 `python3 novel.py init` 建通用骨架（不会覆盖已有文件）
+1. 运行 `python3 novel.py init` 建通用骨架（不会覆盖已有文件，含 `.gitignore`）
 2. 按用户回答填 AGENTS.md 的"作品信息"字段，不适用的行删掉
 3. 逐分类运行 `category add`（含 `_schema.md` 定制）
 4. 填写其他初始文件
+5. 建仓：环境有 git 且书目录不在已有仓库内 → `git init` + `git add -A`，问用户是否做初始提交；无 git 或已在仓库内则静默跳过（机制见 novel-core/AUTOMATION.md「Git 版本管理」）
 
 ## 生成文件内容
 
@@ -168,6 +169,7 @@ init 会播种第一卷卷纲模板，占位符保留即可。
 ✓ AGENTS.md（书名、格式、文风、尺度已设置，偏好已写入硬规则）
 ✓ 设定分类：{列出所有分类}
 ✓ Memory 台账已初始化
+✓ Git 仓库已初始化（环境有 git 且用户确认建仓时）
 
 标记为"待补充"的部分：
 - outline/synopsis.md 核心构思
