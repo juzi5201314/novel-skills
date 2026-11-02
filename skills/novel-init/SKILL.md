@@ -80,7 +80,12 @@ description: 灵活的交互式建书工具：通过对话引导用户定义项�
 角色, 宗门, 秘境, 功法, 灵兽
 ```
 
-**处理**：为每个分类创建 `lore/{英文目录名}/` 目录，英文名由分类中文名音译或翻译得到（如"角色"→characters，"宗门"→sects）。
+**处理**：为每个分类执行 `python3 novel.py category add 中文名 英文目录名 --from 内建模板`：
+
+- 英文目录名由分类中文名翻译得到（"角色"→characters，"宗门"→sects）；嵌套分类直接给路径（"教会"挂在组织类下 → orgs/churches）
+- `--from` 选最接近的内建模板做 `_schema.md` 底稿：character / location / faction / item / world / entity（兜底）
+- 这条命令会同时：建目录 → 播种 `_schema.md` → 把分类写进 AGENTS.md"设定分类"注册表
+- 如果用户对某类有想记录的特定字段（如"角色要记衣物、神态、过往"），直接把这些字段写进该目录的 `_schema.md`，小节层级不限
 
 用户可以跳过这一步，说"先不建"或"之后再说"。
 
@@ -98,12 +103,12 @@ description: 灵活的交互式建书工具：通过对话引导用户定义项�
 ### 第 4 轮：确认与生成
 展示即将创建的结构：
 ```
-AGENTS.md（书名、类型、格式）
+AGENTS.md（书名、简介、格式、设定分类注册表）
 outline/synopsis.md（待填写）
 lore/
-  characters/（角色）
-  sects/（宗门）
-  secrets/（秘境）
+  characters/_schema.md + （角色）
+  sects/_schema.md + （宗门）
+  dungeons/_schema.md + （秘境）
   ...
 memory/
   state.md（空白或填好的初始状态）
@@ -112,81 +117,32 @@ memory/
   summaries/vol01.md
 ```
 
-用户确认后生成。
+用户确认后：
+1. 运行 `python3 novel.py init` 建通用骨架（不会覆盖已有文件）
+2. 按用户回答填 AGENTS.md 的"作品信息"字段，不适用的行删掉
+3. 逐分类运行 `category add`（含 `_schema.md` 定制）
+4. 填写其他初始文件
 
 ## 生成文件内容
 
+`novel.py init` 会自动播种以下文件的最小模板（见 novel-core 的 `assets/templates/`），init 之后只需按用户回答填充：
+
 ### AGENTS.md
-**最小版**（用户什么都没填时）：
-```markdown
-# {书名}
-
-## 作品信息
-- **书名**：{书名}
-- **类型**：{一句话描述}
-
-## 正文格式
-- 段首：{缩进方式}
-- 段间：{空行方式}
-- 首行：第N章 章名
-
-## 硬规则
-（待补充）
-
-## 当前进度
-- **已写**：0 章
-- **当前卷**：（待定）
-
-## 设定索引
-- 总纲：`outline/synopsis.md`
-- 设定分类：
-{for 每个分类}
-  - {分类名}：`lore/{目录}/`
-{endfor}
-- Memory：`memory/state.md` `memory/threads.md` `memory/timeline.md`
-```
+`novel.py init` 播种的是最小版：作品信息（书名/简介/正文格式）、硬规则、设定分类注册表（空表）、目录索引、当前进度。填书名、简介、正文格式三项即可；注释里列的可选字段（视角/文风/平台/字数/更新节奏）用户提了才填，没提就保持注释状态，不要主动加上。
 
 **标注待补充的部分**：让用户知道哪些可以之后再填。
 
 ### outline/synopsis.md
-**最小版**：
-```markdown
-# {书名}
+模板播的是通用结构（主线、分卷规划、人物弧线、长线伏笔）。用户没构思好就保持 `{占位符}`，不要编造内容填进去。
 
-## 核心构思
-（待补充：主题、核心冲突、终极目标）
-
-## 世界观
-（待补充：设定概要）
-
-## 主角设定
-（待补充：见 lore/characters/）
-
-## 分卷规划
-（待补充）
-```
-
-### lore/{category}/
-为每个用户指定的分类创建空目录，不预填任何文件。
+### lore/{category}/_schema.md
+由 `category add` 生成：frontmatter + 底稿模板的结构说明。用户对字段有特别要求时，在播种后直接改写这个文件——它是这个分类以后所有实体文件的字段模板，想加多少小节、多深的层级都可以。
 
 ### memory/
-创建 state.md、threads.md、timeline.md、summaries/vol01.md，内容为空白模板或用户填写的初始状态。
+state.md、threads.md、timeline.md、summaries/vol01.md 由 init 播种空白模板；初始状态用户说了才填。
 
 ### outline/volumes/vol01.md
-**最小版**：
-```markdown
-# 第一卷：（卷名待定）
-
-**卷主题**：（待补充）
-
-**起止章节**：0001-（待定）
-
-## 卷纲
-（待补充）
-
-## 已写章节
-（无）
-```
+init 会播种第一卷卷纲模板，占位符保留即可。
 
 ## 完成后
 
@@ -213,22 +169,27 @@ memory/
 ### 添加设定分类
 用户："我想加个'法器'分类"
 
-→ 创建 `lore/artifacts/`，更新 AGENTS.md 的设定索引。
+→ `python3 novel.py category add 法器 artifacts --from item`（建目录 + 播种 `_schema.md` + 自动写注册表）。用户有特定字段要求就接着改 `_schema.md`。
 
 ### 重命名分类
 用户："把'门派'改成'教会'"
 
-→ 重命名 `lore/sects/` → `lore/churches/`，更新 AGENTS.md 和所有引用。
+→ `python3 novel.py category rename sects churches --name 教会`（改目录名，自动同步注册表行和 glossary 里的路径引用；`_schema.md` 随目录走）。
+
+### 调整字段结构
+用户："角色再加个'衣物'和'过往'字段"
+
+→ 改 `lore/characters/_schema.md` 的小节；已有角色文件按需回填（问用户要不要批量补）。
 
 ### 删除分类
 用户："删掉'xx'分类"
 
-→ 检查是否为空，非空时询问确认，删除目录，更新索引。
+→ 检查是否为空，非空时询问确认，删目录，并删掉注册表对应行。
 
 ### 填补"待补充"
 用户："补一下力量体系"
 
-→ 创建 `lore/world/力量体系.md`，交互填写内容。
+→ 在对应体系类分类目录下建文件（如 `lore/world/力量体系.md`，没有该分类就先 `category add`），交互填写内容。
 
 ## 注意事项
 

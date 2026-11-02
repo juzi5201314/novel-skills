@@ -222,16 +222,19 @@ function openShelf(cat) {
   state.dirty = false;
   clearTimeout(state.saveTimer);
   const catObj = (state.lore || []).find(c => c.name === cat);
+  const label = catObj?.label || cat;
   const items = (catObj ? catObj.items : []).filter(i =>
     !state.filter || i.name.includes(state.filter) || i.filename.includes(state.filter));
   $('#doc-kind').textContent = '设定';
-  $('#doc-title').textContent = cat;
+  $('#doc-title').textContent = label;
   $('#doc-actions').innerHTML =
+    (catObj?.schema ? '<button class="btn btn-ghost" id="btn-schema">分类模板</button>' : '') +
     '<button class="btn btn-primary" id="btn-new-item">＋ 新建设定</button>';
+  if (catObj?.schema) $('#btn-schema').onclick = () => openLoreItem(cat, '_schema.md');
   $('#btn-new-item').onclick = showNewLoreItemModal;
   $('#desk').innerHTML = `
     <div class="shelf">
-      <div class="shelf-title"><h3>${esc(cat)}</h3><span class="n">${items.length} 项</span></div>
+      <div class="shelf-title"><h3>${esc(label)}</h3><span class="n">${items.length} 项</span></div>
       <div class="card-grid" id="card-grid"></div>
     </div>`;
   const grid = $('#card-grid');
@@ -348,20 +351,21 @@ function renderChaptersPanel() {
 function renderLorePanel() {
   const box = $('#panel-list');
   box.innerHTML = '';
-  const cats = (state.lore || []).filter(c => !state.filter || c.name.includes(state.filter));
+  const cats = (state.lore || []).filter(c =>
+    !state.filter || c.name.includes(state.filter) || (c.label || '').includes(state.filter));
   for (const c of cats) {
     const el = document.createElement('div');
     el.className = 'cat-item' + (state.loreCat === c.name && state.doc?.kind !== 'lore' ? ' is-active' : '');
     el.dataset.cat = c.name;
     el.innerHTML = `
       <button class="pick" title="查看该分类">
-        <span class="cat-name">${esc(c.name)}</span>
+        <span class="cat-name">${esc(c.label || c.name)}</span>
         <span class="cat-count">${c.items.length}</span>
       </button>
       <button class="del" title="删除分类（须为空）" data-del>×</button>`;
     $('.pick', el).onclick = () => flushSave().then(() => openShelf(c.name));
     $('[data-del]', el).onclick = () =>
-      confirmDanger('删除分类', `确定删除分类 <strong>${esc(c.name)}</strong>？仅当分类为空时可删除。`, async () => {
+      confirmDanger('删除分类', `确定删除分类 <strong>${esc(c.label || c.name)}</strong>？仅当分类为空时可删除。`, async () => {
         try {
           await api.send('DELETE', `/api/lore-category/${encodeURIComponent(c.name)}`);
         } catch (e) { toast(e.message, true); return false; }
@@ -431,8 +435,8 @@ function showNewCategoryModal() {
     title: '新建设定分类',
     body: `
       <div class="field"><label>分类目录名</label>
-        <input id="f-cat" placeholder="如 characters、locations、sects">
-        <p class="field-hint">建议英文小写复数；文件名仍可用中文，如 characters/鸿钧.md</p>
+        <input id="f-cat" placeholder="如 characters、sects，嵌套用 orgs/churches">
+        <p class="field-hint">建议英文小写，可嵌套子目录；文件名仍可用中文，如 characters/鸿钧.md</p>
       </div>`,
     okText: '创建',
     onOk: async ov => {

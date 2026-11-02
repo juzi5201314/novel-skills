@@ -82,11 +82,11 @@ else:
 def auto_extract_memory(chapter_text, chapter_num):
     """从正文自动提取 memory 更新"""
     
-    # 1. 扫描境界变化
-    境界模式 = ["突破到", "晋升", "达到...境界", "凝聚金丹"]
+    # 1. 扫描实力变化（关键词按本书体系类设定的词汇调整）
+    实力模式 = ["突破到", "晋升", "达到...", "进阶"]
     for 句子 in chapter_text.splitlines():
-        if 匹配境界模式(句子):
-            提取(角色, 新境界, 章号)
+        if 匹配实力模式(句子):
+            提取(角色, 新实力, 章号)
     
     # 2. 扫描物品流转
     物品模式 = ["得到", "交给", "遗失", "夺取"]
@@ -282,29 +282,28 @@ Agent：[写完第 5 章 2487 字]
 #### novel-init 调用 novel-lore
 
 ```python
-# novel-init 的第 3 轮（主角设计）
-用户选择了主角人设后：
-    
-    # 不再只建最小条目，而是调用 lore 的详细流程
-    agent.call_skill("novel-lore", {
-        "action": "create_character",
-        "name": 主角名,
-        "preset": 从用户选择提取的人设,
-        "auto_mode": True  # 自动模式，跳过冗余提问
-    })
+# novel-init 第 2 轮（设定分类）：每个分类由 novel.py category 创建，
+# 分类字段若用户有特别要求，接着编辑该目录的 _schema.md。
+
+# 第 3 轮（核心要素，可选）：用户选择"现在填"时，
+# 对具体实体（如主角）调用 lore 的详细流程
+agent.call_skill("novel-lore", {
+    "action": "create_entity",
+    "category": 所属分类目录,
+    "name": 实体名,
+    "preset": 从用户选择提取的要点,
+    "auto_mode": True  # 自动模式，跳过冗余提问
+})
 ```
 
 用户体验：
 ```
-用户：[选了主角人设 A]
+用户：[给出主角要点]
 Agent：好的，我来详细设计主角...
-      [内部调用 novel-lore]
+      [内部调用 novel-lore，按 characters/_schema.md 建文件]
       主角「林川」已创建 ✓
       - 核心欲望：证明自己
       - 缺陷：过于自负
-      - 金手指：【待定，第 4 轮确定】
-      
-      继续第 4 轮：世界观...
 ```
 
 ### 9. 批量操作自动化
@@ -363,5 +362,6 @@ Agent 每次操作时，内心检查：
 - ☑ 检查重名、冲突
 - ☑ 自动更新 glossary
 - ☑ 双向更新关联实体
+- ☑ 实体不归属任何分类时提示用户加分类（novel.py category add）
 
 这些操作**全部在后台完成**，用户只看到结果摘要喵~

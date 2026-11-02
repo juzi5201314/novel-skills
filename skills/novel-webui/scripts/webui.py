@@ -107,15 +107,56 @@ def parse_lore_meta(path: Path) -> dict:
             "tags": tags, "preview": preview}
 
 
+LORE_SKIP_DIRS = {"images", "archive"}
+
+
+def load_categories() -> dict:
+    """AGENTS.md"## 设定分类"表 → {目录(相对 lore/): 中文名}。解析失败返回 {}。"""
+    agents = ROOT / "AGENTS.md"
+    if not agents.is_file():
+        return {}
+    m = re.search(r"^##\s*设定分类[^\n]*\n(.*?)(?=^##\s|\Z)", read_text(agents), re.M | re.S)
+    out = {}
+    if m:
+        for line in m.group(1).splitlines():
+            row = re.match(r"^\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|?\s*$", line)
+            if not row:
+                continue
+            name, d = row.group(1).strip(" `　"), row.group(2).strip(" `　")
+            if not name or name == "分类" or set(name + d) <= set("-: "):
+                continue
+            d = d.strip("/")
+            if d.startswith("lore/"):
+                d = d[5:]
+            if d:
+                out[d] = name
+    return out
+
+
 def scan_lore() -> list[dict]:
+    """lore 下的分类目录（可嵌套）：每个目录列出直接包含的 .md，
+    排除 _schema.md 等元文件、images/ archive/；空顶层目录也显示。"""
     lore_dir = LORE
     if not lore_dir.is_dir():
         return []
-    return [
-        {"name": d.name, "items": [parse_lore_meta(f) for f in sorted(d.glob("*.md"))]}
-        for d in sorted(lore_dir.iterdir())
-        if d.is_dir() and not d.name.startswith(".")
-    ]
+    cats = load_categories()
+    out = []
+    for d in sorted(lore_dir.rglob("*")):
+        if not d.is_dir():
+            continue
+        rel = d.relative_to(lore_dir)
+        if any(part.startswith((".", "_")) or part in LORE_SKIP_DIRS for part in rel.parts):
+            continue
+        mds = sorted(f for f in d.glob("*.md") if not f.name.startswith("_"))
+        if not mds and len(rel.parts) > 1:
+            continue
+        out.append({
+            "name": rel.as_posix(),
+            "label": cats.get(rel.as_posix(), ""),
+            "schema": "_schema.md" if (d / "_schema.md").is_file() else "",
+            "items": [parse_lore_meta(f) for f in mds],
+        })
+    return out
 
 
 def project_info() -> dict:
@@ -196,8 +237,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.fail("章节不存在", 404)
                 text = read_text(f)
                 return self.json_out({"content": text, "words": words(text)})
-            if len(seg) == 4 and seg[:2] == ["api", "lore-item"]:
-                f = safe_path(LORE, seg[2], seg[3])
+            if len(seg) >= 4 and seg[:2] == ["api", "lore-item"]:
+                f = safe_path(LORE, "/".join(seg[2:-1]), seg[-1])
                 if not f or not f.is_file():
                     return self.fail("设定不存在", 404)
                 return self.json_out({"content": read_text(f)})
@@ -215,6 +256,8 @@ class Handler(BaseHTTPRequestHandler):
             data = self.body()
             route = "/".join(seg[:2])
             if route == "api/chapter-save":
+                if not data["id"].endswith(".txt"):
+                    return self.fail("只支持 .txt 章节文件")
                 f = safe_path(CHAPTERS, data["id"])
                 if not f:
                     return self.fail("非法路径")
@@ -234,7 +277,7 @@ class Handler(BaseHTTPRequestHandler):
                 if f.exists():
                     return self.fail("同名章节已存在", 409)
                 f.parent.mkdir(parents=True, exist_ok=True)
-                f.write_text(f"第{number}章 {title}\n\n　　", encoding="utf-8")
+                f.write_text(f"第{number}章 {title}\n\n", encoding="utf-8")
                 return self.json_out({"ok": True, "id": f"{volume}/{name}"})
             if route == "api/chapter-delete":
                 f = safe_path(CHAPTERS, data["id"])
@@ -244,9 +287,11 @@ class Handler(BaseHTTPRequestHandler):
                     f.unlink()
                 return self.json_out({"ok": True})
             if route == "api/lore-category-create":
-                name = BAD_NAME.sub("", data["name"]).strip()
-                if not name:
+                segs = [BAD_NAME.sub("", s).strip() for s in data["name"].strip().strip("/").split("/")]
+                segs = [s for s in segs if s and not s.startswith(".")]
+                if not segs:
                     return self.fail("分类名不能为空")
+                name = "/".join(segs)
                 f = safe_path(LORE, name)
                 if not f:
                     return self.fail("非法分类名")
@@ -263,15 +308,27 @@ class Handler(BaseHTTPRequestHandler):
                 if f.exists():
                     return self.fail("同名设定已存在", 409)
                 f.parent.mkdir(parents=True, exist_ok=True)
-                # type 用分类名的单数形式（characters→character）
-                type_ = data["category"][:-1] if data["category"].endswith("s") else data["category"]
                 stem = filename[:-3]
-                f.write_text(
-                    f"---\nname: {stem}\naliases: []\ntype: {type_}\ntags: []\n---\n\n# {stem}\n\n",
-                    encoding="utf-8",
-                )
+                label = load_categories().get(data["category"], data["category"])
+                schema = f.parent / "_schema.md"
+                if schema.is_file():
+                    # 以该分类的字段模板为底稿：替换 name/type，去掉底稿标记与说明注释
+                    content = read_text(schema)
+                    content = re.sub(r"(?m)^name:.*$", f"name: {stem}", content, count=1)
+                    content = re.sub(r"(?m)^type:.*$", f"type: {label}", content, count=1)
+                    content = re.sub(r"(?m)^base:.*\n", "", content)
+                    content = re.sub(r"<!--.*?-->\s*", "", content, count=1, flags=re.S)
+                    content = re.sub(r"(?m)^#\s+.*$", f"# {stem}", content, count=1)
+                    f.write_text(content, encoding="utf-8")
+                else:
+                    f.write_text(
+                        f"---\nname: {stem}\naliases: []\ntype: {label}\ntags: []\n---\n\n# {stem}\n\n",
+                        encoding="utf-8",
+                    )
                 return self.json_out({"ok": True, "filename": filename})
             if route == "api/lore-item-save":
+                if not data["filename"].endswith(".md"):
+                    return self.fail("只支持 .md 设定文件")
                 f = safe_path(LORE, data["category"], data["filename"])
                 if not f:
                     return self.fail("非法路径")
@@ -293,8 +350,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         seg = [urllib.parse.unquote(s) for s in urllib.parse.urlparse(self.path).path.split("/") if s]
-        if len(seg) == 3 and seg[:2] == ["api", "lore-category"]:
-            d = safe_path(LORE, seg[2])
+        if len(seg) >= 3 and seg[:2] == ["api", "lore-category"]:
+            d = safe_path(LORE, "/".join(seg[2:]))
             if not d or not d.is_dir():
                 return self.fail("分类不存在", 404)
             if any(d.iterdir()):

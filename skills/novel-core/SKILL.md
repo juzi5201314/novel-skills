@@ -14,7 +14,7 @@ description: 网文项目的目录约定、文件格式、章节命名、设定�
 书根目录就是项目根目录（一本书一个仓库）。
 
 ```text
-AGENTS.md                    # 每次会话自动注入：作品档案、文风、硬规则、目录索引、当前进度
+AGENTS.md                    # 每次会话自动注入：作品档案、硬规则、设定分类注册表、目录索引、当前进度
 CLAUDE.md -> AGENTS.md       # 软链接，给 Claude Code 用
 chapters/
   vol01/0001-初入洪荒.txt     # 正文，纯文本
@@ -23,11 +23,9 @@ outline/
   volumes/vol01.md           # 卷纲
   chapters/0001.md           # 章纲
 lore/
-  world/修炼体系.md           # 世界观：力量体系、地理格局、历史、种族、规则
-  characters/鸿钧.md
-  locations/不周山.md
-  factions/巫族.md
-  items/造化玉碟.md
+  {分类目录}/                 # 用户自定义，可嵌套（如 characters/ orgs/churches/ starships/）
+    _schema.md               # 该分类的字段模板，建实体时参照；小节可自由增删
+    鸿钧.md                   # 实体文件，一实体一文件
   images/鸿钧-立绘.png
   glossary.md                # 术语与专名表
 memory/
@@ -38,7 +36,7 @@ memory/
 drafts/                      # 草稿、互动写作记录、审稿报告、检索笔记
 ```
 
-新建项目用 `novel.py init`（见下文），不要手工逐个建。
+新建项目用 `novel.py init` 建通用骨架（不含设定分类），分类由 novel-init 询问用户后用 `novel.py category add` 逐个添加。设定分类不写死：lore/ 下放什么目录、目录里记录什么字段，都由这本书的 AGENTS.md"设定分类"注册表和各目录的 `_schema.md` 决定。
 
 ## 命名
 
@@ -60,25 +58,38 @@ drafts/                      # 草稿、互动写作记录、审稿报告、检�
 
 ## 设定文件格式（lore/**/*.md）
 
-一个实体一个文件，模板在本技能 `assets/templates/`：
+### 分类注册表与 _schema.md
 
-| 类型 | 模板 | 目录 |
-|---|---|---|
-| 角色 | character.md | lore/characters/ |
-| 地点 | location.md | lore/locations/ |
-| 势力 | faction.md | lore/factions/ |
-| 物品/功法/丹药 | item.md | lore/items/ |
-| 世界观体系 | world.md | lore/world/ |
-| 卷纲 | volume.md | outline/volumes/ |
-| 章纲 | chapter-outline.md | outline/chapters/ |
+一本书有哪些设定分类**不由本技能规定**，由这本书自己声明：
 
-规则：
-- 文件开头是 YAML frontmatter，`name` 和 `aliases` 必填。`aliases` 写全所有称呼（称号、外号、尊称、昵称），`novel.py find --entity` 靠它检索。
+- `AGENTS.md` 的"## 设定分类"表是注册表：`| 分类 | 目录 |` 一行一个分类，目录是 lore/ 下的相对路径，可嵌套。
+- 每个分类目录里的 `_schema.md` 是该类的字段模板：小节数量、层级不限，完全按用户要求写。
+- 建实体前先读所属目录的 `_schema.md`；没有时用通用模板 `entity.md` 兜底。
+- 增删分类用 `novel.py category`（见下文工具一节），不要徒手改注册表。
+
+### 内建模板
+
+`assets/templates/` 下的模板是**生成 `_schema.md` 的底稿**，不是固定分类表。`novel.py category add 教会 churches --from faction` 会把 faction.md 的结构抄进 `lore/churches/_schema.md`，之后再按用户需要改。
+
+| 模板 | 适合用作底稿 |
+|---|---|
+| entity.md | 通用兜底，任何分类都能用 |
+| character.md | 人物类（角色、NPC、种族个体…） |
+| location.md | 地点类（地名、秘境、地图…） |
+| faction.md | 组织类（势力、宗门、教会、公司、王朝、舰队…） |
+| item.md | 物品类（道具、法宝、功法、装备、星舰…） |
+| world.md | 体系类（力量体系、规则、历史、经济…） |
+| volume.md | 卷纲（outline/volumes/） |
+| chapter-outline.md | 章纲（outline/chapters/） |
+
+实体文件规则：
+- 文件开头是 YAML frontmatter，`name` 和 `aliases` 必填，`type` 写分类中文名。`aliases` 写全所有称呼（称号、外号、尊称、昵称），`novel.py find --entity` 靠它检索。
 - 正文用 `[[实体名]]` 引用其它实体，用四位章号 `0012` 引用章节。
-- 模板里用不上的小节直接删掉，不要填“暂无”“待定”凑格式。空小节比没有小节更误导人。
+- `_schema.md` 里用不上的小节在实体文件里删掉，不要填“暂无”“待定”凑格式。空小节比没有小节更误导人。
 - “秘密/隐藏设定”小节是作者视角，写真相；读者已知到什么程度记在 memory/threads.md。
-- lore 存的是相对固定的设定。境界、伤势、位置、持有物这些每几章就变的东西放 memory/state.md，lore 里只在设定本身改变时才改。这样状态只有一个来源，不会两边不一致。
+- lore 存的是相对固定的设定。实力、伤势、位置、持有物这些每几章就变的东西放 memory/state.md，lore 里只在设定本身改变时才改。这样状态只有一个来源，不会两边不一致。
 - 新专名先登记到 lore/glossary.md 再写进正文。
+- lore 根目录只放 glossary.md 等全局文件，实体必须放进某个分类目录。
 
 ## memory/ 连续性台账
 
@@ -86,7 +97,7 @@ drafts/                      # 草稿、互动写作记录、审稿报告、检�
 
 | 文件 | 存什么 | 写法 |
 |---|---|---|
-| state.md | 此刻的世界：每个活跃角色的境界、伤势、持有物、位置、目标、**已知秘密** | 覆盖式更新，只保留当前值 |
+| state.md | 此刻的世界：每个活跃角色的实力、伤势、持有物、位置、目标、**已知秘密** | 覆盖式更新，只保留当前值 |
 | threads.md | 每条伏笔/暗线：真相、读者已知程度、计划回收点、不可违反的约束、推进记录 | 追加记录，回收后移入“已回收” |
 | timeline.md | 故事内时间、事件、地点 | 追加一行 |
 | summaries/volNN.md | 每章 3–6 行事实摘要 | 追加一节 |
@@ -100,7 +111,7 @@ drafts/                      # 草稿、互动写作记录、审稿报告、检�
 2. `memory/state.md` 更新本章改变了的字段，改“截至”。
 3. `memory/threads.md`：本章埋设/推进/回收了哪条，追加记录；新伏笔新开编号（T001 起递增）。
 4. `memory/timeline.md` 追加本章事件。
-5. 新出场的有名角色、地点、势力、物品：在 lore/ 建最小条目（frontmatter + 一句话 + 已在正文中出现的事实），登记 glossary。
+5. 新出场的有名实体：在其所属分类目录建最小条目（frontmatter + 一句话 + 已在正文中出现的事实），登记 glossary；该实体不属于任何已有分类时，先问用户要不要加新分类。
 6. `outline/volumes/volNN.md` 章节表把本章状态改为“定稿”。
 7. 更新 AGENTS.md“当前进度”。
 
@@ -118,7 +129,10 @@ drafts/                      # 草稿、互动写作记录、审稿报告、检�
 
 ```bash
 N=.agents/skills/novel-core/scripts/novel.py
-python3 $N init                               # 建目录 + 种子文件（已存在的不覆盖），并建 CLAUDE.md 软链接
+python3 $N init                               # 建通用骨架 + 种子文件（已存在的不覆盖），并建 CLAUDE.md 软链接
+python3 $N category list                      # 列出注册表分类和未登记的 lore 目录
+python3 $N category add 教会 churches --from faction   # 建目录+_schema.md+写注册表
+python3 $N category rename churches parishes --name 教区  # 改目录名，同步注册表和引用
 python3 $N next                               # 下一章章号、建议路径、章纲是否存在、上一章路径
 python3 $N stats --min 2000 --max 3000        # 每章字数，越界标记；--range 1-50 限定范围
 python3 $N lint chapters/vol01/0001-x.txt --min 2000 --max 3000
@@ -127,6 +141,8 @@ python3 $N find 紫霄宫 造化玉碟 --range 1-80 --count
 python3 $N find 鸿钧 --first                   # 首次出现在哪一章
 python3 $N find --all 混沌钟                   # 连 outline/ lore/ memory/ 一起搜
 python3 $N split 旧稿.txt --dry-run            # 整本 txt 按“第X章”切成标准章节文件
+python3 $N validate [--fix]                   # 完整性检查；--fix 补 glossary 和未登记目录
+python3 $N export -o 全书.txt --volumes 1-3    # 合并导出
 ```
 
 - 字数口径：去掉所有空白后的字符数（含标点），接近主流平台后台的统计。
