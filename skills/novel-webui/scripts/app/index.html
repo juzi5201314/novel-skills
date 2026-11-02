@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>墨稿</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23A83B2A'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='%23F6F2E8' font-family='serif'%3E墨%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<aside id="rail">
+  <div class="seal" title="墨稿">墨</div>
+  <nav id="rail-nav">
+    <button class="rail-item is-active" data-tab="chapters"><span>正</span><span>文</span></button>
+    <button class="rail-item" data-tab="lore"><span>设</span><span>定</span></button>
+  </nav>
+  <div class="rail-foot"><span id="rail-book"></span></div>
+</aside>
+
+<aside id="panel">
+  <header id="panel-head">
+    <h1 id="book-name">墨稿</h1>
+    <p id="book-meta"></p>
+  </header>
+  <div id="panel-tools">
+    <input id="filter" type="search" placeholder="筛选…" autocomplete="off" spellcheck="false">
+  </div>
+  <div id="panel-list" role="list"></div>
+  <footer id="panel-foot">
+    <button id="btn-new" class="btn btn-primary">＋ 新章节</button>
+  </footer>
+</aside>
+
+<main id="main">
+  <header id="topbar">
+    <div id="doc-id">
+      <span id="doc-kind"></span>
+      <h2 id="doc-title"></h2>
+    </div>
+    <div id="top-right">
+      <span id="save-state" aria-live="polite"></span>
+      <div id="doc-actions"></div>
+    </div>
+  </header>
+  <section id="desk"></section>
+  <footer id="statusbar">
+    <span id="status-left">就绪</span>
+    <span id="status-right"></span>
+  </footer>
+</main>
+
+<div id="modal-root"></div>
+<div id="toast-root"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
