@@ -99,12 +99,12 @@ def auto_extract_memory(chapter_text, chapter_num):
     # → 更新 state.md 的"已知秘密"
     
     # 5. 扫描伏笔操作
-    伏笔模式 = 从 threads.md 读取每条伏笔的关键词
+    伏笔模式 = 从 threads.md 读取每条伏笔的"检索钩子"
     # → 检测本章是否推进了某条伏笔
     
     # 6. 生成摘要
-    # 提取：主要事件、出场角色、关键信息、状态变化
-    # 格式化为 3-6 行摘要
+    # 提取：主要事件、场景类型、地点、出场角色、关键信息、状态变化
+    # 按 summaries 模板格式化（含 类型/场景 索引字段）
     
     return {
         "state_updates": [...],
