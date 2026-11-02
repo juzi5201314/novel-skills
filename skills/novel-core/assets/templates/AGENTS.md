@@ -41,6 +41,7 @@
 | 路径 | 内容 |
 |---|---|
 | chapters/volNN/NNNN-章名.txt | 正文，纯文本 |
+| chapters/volNN/NNNNx-章名.txt | 番外（x=a-z，锚在第 NNNN 章后） |
 | outline/synopsis.md | 总纲 |
 | outline/volumes/volNN.md | 卷纲 |
 | outline/chapters/NNNN.md | 章纲（写章前的骨架） |

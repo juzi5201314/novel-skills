@@ -7,7 +7,8 @@
   stats     统计章节字数
   lint      检查单章格式与 AI 味高频表达
   find      在正文中检索实体/关键词（--entity 自动带上 lore 里的别名）
-  split     把整本 txt 按"第X章"切分成标准章节文件
+  split     把整本 txt 按"第X章"切分成标准章节文件（番外/外篇/楔子识别为 NNNNx）
+  insert    在第 N 章后空出一个主线章位（重编号并同步引用）；--extra 取该锚点的空闲番外位
   category  设定分类注册表：list / add / rename（注册表在 AGENTS.md"设定分类"一节）
   validate  检查项目完整性（必填字段、分类注册表、glossary、frontmatter、编号连续性）
   export    合并全书为单个 txt，可按卷或章号范围导出
@@ -48,9 +49,13 @@ SEEDS = {
 CN_NUM = "0-9零〇一二三四五六七八九十百千万两"
 CJK = "\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
 HEADER_RE = re.compile(rf"^第[{CN_NUM}]+章[ \u3000]+\S")
+EXTRA_HEADER_RE = re.compile(r"^(?:番外|外篇|楔子|序章|序曲|尾声)")
 SPLIT_CHAPTER_RE = re.compile(rf"^\s*第[{CN_NUM}]+[章回][ \u3000:：、.]*(.*)$")
+SPLIT_EXTRA_RE = re.compile(
+    rf"^\s*(番外篇?|外篇|楔子|序章|序曲|尾声)[{CN_NUM}]*[ \u3000:：、·\-—]*(.*\S)?\s*$")
 SPLIT_VOLUME_RE = re.compile(rf"^\s*第[{CN_NUM}]+卷")
-CHAPTER_FILE_RE = re.compile(r"^(\d{4,})-(.+)\.txt$")
+# NNNNx-章名.txt：x 为空是主线章，a-z 是锚在 NNNN 章后的第 1-26 个番外（0000x 用于正文前的楔子/序章）
+CHAPTER_FILE_RE = re.compile(r"^(\d{4,})([a-z]?)-(.+)\.txt$")
 CJK_RE = re.compile(f"[{CJK}]")
 WS_RE = re.compile(r"\s")
 
@@ -210,12 +215,14 @@ def split_header(lines: list[str]) -> tuple[str, int]:
     return "", 0
 
 
-def chapter_files(root: Path) -> list[tuple[int, Path]]:
+def chapter_files(root: Path) -> list[tuple[int, str, Path]]:
+    """返回 (章号, 番外后缀, 路径)，按 (章号, 后缀) 排序：0019 < 0019a < 0019b < 0020。
+    后缀 "" 是主线章，"a"-"z" 是番外。"""
     found = []
     for p in (root / "chapters").rglob("*.txt"):
         m = CHAPTER_FILE_RE.match(p.name)
         if m:
-            found.append((int(m.group(1)), p))
+            found.append((int(m.group(1)), m.group(2), p))
     return sorted(found)
 
 
@@ -229,6 +236,57 @@ def parse_range(spec: str | None) -> tuple[int, int]:
 def fmt_lines(nums: list[int], limit: int = 8) -> str:
     shown = " ".join(f"L{n}" for n in nums[:limit])
     return shown + (f" …(+{len(nums) - limit})" if len(nums) > limit else "")
+
+
+_CN_DIGITS = {c: i for i, c in enumerate("零一二三四五六七八九")}
+_CN_DIGITS["〇"] = 0
+_CN_DIGITS["两"] = 2
+_CN_UNITS = {"十": 10, "百": 100, "千": 1000}
+
+
+def cn2int(s: str) -> int | None:
+    """章号写法 → int。阿拉伯数字直接转，中文数字支持到万位；解析不了返回 None。"""
+    if s.isdigit():
+        return int(s)
+    total, sec, num = 0, 0, 0
+    for ch in s:
+        if ch in _CN_DIGITS:
+            num = _CN_DIGITS[ch]
+        elif ch in _CN_UNITS:
+            sec += (num or 1) * _CN_UNITS[ch]
+            num = 0
+        elif ch == "万":
+            sec = (sec + num) * 10000
+            total += sec
+            sec = num = 0
+        else:
+            return None
+    return total + sec + num
+
+
+def int2cn(n: int) -> str:
+    """1-99999 → 中文章号写法（章头风格：15→十五、101→一百零一、10020→一万零二十）。"""
+    d = "零一二三四五六七八九"
+
+    def four(v: int, leading: bool) -> str:
+        s, zero = "", False
+        for u, name in ((1000, "千"), (100, "百"), (10, "十"), (1, "")):
+            q, v = divmod(v, u)
+            if q == 0:
+                if s:
+                    zero = True
+                continue
+            if zero:
+                s += "零"
+                zero = False
+            s += name if u == 10 and q == 1 and leading and not s else d[q] + name
+        return s
+
+    hi, lo = divmod(n, 10000)
+    if hi:
+        low = ("零" if 0 < lo < 1000 else "") + (four(lo, True) if lo else "")
+        return four(hi, False) + "万" + low
+    return four(lo, True)
 
 
 def frontmatter(path: Path) -> dict[str, str | list[str]]:
@@ -273,11 +331,11 @@ def cmd_init(a: argparse.Namespace) -> None:
 
 def cmd_next(a: argparse.Namespace) -> None:
     root = Path(a.root)
-    files = chapter_files(root)
-    if files:
-        n, last = files[-1]
+    mains = [(n, p) for n, s, p in chapter_files(root) if not s]
+    if mains:
+        n, last = mains[-1]
         vol_dir = last.parent
-        missing = sorted(set(range(1, n + 1)) - {num for num, _ in files})
+        missing = sorted(set(range(1, n + 1)) - {num for num, _ in mains})
         if missing:
             print(f"注意：缺少章号 {', '.join(f'{m:04d}' for m in missing[:20])}")
     else:
@@ -293,12 +351,12 @@ def cmd_next(a: argparse.Namespace) -> None:
 def cmd_stats(a: argparse.Namespace) -> None:
     root = Path(a.root)
     lo, hi = parse_range(a.range)
-    rows = [(n, p) for n, p in chapter_files(root) if lo <= n <= hi]
+    rows = [(n, s, p) for n, s, p in chapter_files(root) if lo <= n <= hi]
     if not rows:
-        sys.exit("没有找到章节文件（chapters/**/NNNN-章名.txt）")
+        sys.exit("没有找到章节文件（chapters/**/NNNN[x]-章名.txt）")
     total = 0
-    print("章号    字数    汉字  文件")
-    for n, p in rows:
+    print("章号     字数    汉字  文件")
+    for n, s, p in rows:
         lines = read_text(p).splitlines()
         _, hline = split_header(lines)
         words, han = word_count("\n".join(lines[hline:]))
@@ -308,7 +366,7 @@ def cmd_stats(a: argparse.Namespace) -> None:
             flag = f"  偏少（<{a.min}）"
         elif a.max and words > a.max:
             flag = f"  偏多（>{a.max}）"
-        print(f"{n:04d}  {words:>6}  {han:>6}  {p.relative_to(root)}{flag}")
+        print(f"{f'{n:04d}{s}':<6} {words:>6}  {han:>6}  {p.relative_to(root)}{flag}")
     print(f"合计 {len(rows)} 章，{total} 字，平均 {total // len(rows)} 字/章")
 
 
@@ -319,7 +377,11 @@ def cmd_lint(a: argparse.Namespace) -> None:
     warns: list[str] = []
 
     header, hline = split_header(lines)
-    if not HEADER_RE.match(header):
+    fm = CHAPTER_FILE_RE.match(path.name)
+    if fm and fm.group(2):
+        if not EXTRA_HEADER_RE.match(header):
+            errors.append(f"L{hline}: 番外首行应为“番外/外篇/楔子/序章 章名”，实际是“{header[:30]}”")
+    elif not HEADER_RE.match(header):
         errors.append(f"L{hline}: 首行应为“第N章 章名”，实际是“{header[:30]}”")
     paras = [(i, line) for i, line in enumerate(lines, 1) if i > hline and line.strip()]
     if not paras:
@@ -441,7 +503,7 @@ def cmd_find(a: argparse.Namespace) -> None:
     pattern = re.compile("|".join(ordered if a.regex else map(re.escape, ordered)))
 
     lo, hi = parse_range(a.range)
-    files = [(f"{n:04d}", p) for n, p in chapter_files(root) if lo <= n <= hi]
+    files = [(f"{n:04d}{s}", p) for n, s, p in chapter_files(root) if lo <= n <= hi]
     if a.all:
         files += [(p.relative_to(root).as_posix(), p) for d in ("outline", "lore", "memory")
                   for p in sorted((root / d).rglob("*.md"))]
@@ -489,8 +551,14 @@ def cmd_split(a: argparse.Namespace) -> None:
         s = line.strip()
         short = len(s) <= 50 and "。" not in s
         m = SPLIT_CHAPTER_RE.match(line) if short else None
+        xm = SPLIT_EXTRA_RE.match(line) if short and m is None else None
         if m:
             cur = {"vol": vol, "title": m.group(1).strip() or "无题", "body": []}
+            chapters.append(cur)
+        elif xm:
+            # 番外/楔子等：锚在前一个主线章之后，正文前的锚记 0000
+            cur = {"vol": vol, "title": (xm.group(2) or "").strip() or s,
+                   "body": [], "extra": True, "header": s}
             chapters.append(cur)
         elif short and SPLIT_VOLUME_RE.match(line):
             if chapters and chapters[-1]["vol"] == vol:
@@ -506,11 +574,21 @@ def cmd_split(a: argparse.Namespace) -> None:
 
     out = Path(a.root) / "chapters"
     plan = []
-    for idx, ch in enumerate(chapters, a.start):
+    main_idx, extra_seq, idx = a.start - 1, 0, a.start
+    for ch in chapters:
         safe = re.sub(r'[\\/:*?"<>|\s]+', "", ch["title"]) or "无题"
-        target = out / f"vol{ch['vol']:02d}" / f"{idx:04d}-{safe}.txt"
         body = "\n".join(ch["body"]).strip("\n")
-        plan.append((target, f"第{idx}章 {ch['title']}\n\n{body}\n"))
+        if ch.get("extra"):
+            if extra_seq >= 26:
+                sys.exit(f"第 {main_idx} 章后的番外超过 26 个，超出 NNNNx 命名容量")
+            target = out / f"vol{ch['vol']:02d}" / f"{main_idx:04d}{chr(ord('a') + extra_seq)}-{safe}.txt"
+            plan.append((target, f"{ch['header']}\n\n{body}\n"))
+            extra_seq += 1
+        else:
+            main_idx, extra_seq = idx, 0
+            target = out / f"vol{ch['vol']:02d}" / f"{idx:04d}-{safe}.txt"
+            plan.append((target, f"第{idx}章 {ch['title']}\n\n{body}\n"))
+            idx += 1
     clash = [t for t, _ in plan if t.exists()]
     if clash:
         sys.exit(f"目标文件已存在，未写入任何文件：{clash[0]} 等 {len(clash)} 个")
@@ -526,7 +604,178 @@ def cmd_split(a: argparse.Namespace) -> None:
         extra_path.parent.mkdir(parents=True, exist_ok=True)
         extra_path.write_text(extra_text + "\n", encoding="utf-8")
         print(f"非章节文字已存到 {extra_path}")
-    print(f"{'预览' if a.dry_run else '已切分'} {len(plan)} 章，{vol} 卷")
+    main_cnt = idx - a.start
+    suffix = f" + {len(plan) - main_cnt} 个番外" if len(plan) > main_cnt else ""
+    print(f"{'预览' if a.dry_run else '已切分'} {main_cnt} 章{suffix}，{vol} 卷")
+
+
+def _retitle_chapter(path: Path) -> None:
+    """把章节文件首行“第X章”的章号 +1（阿拉伯/中文数字都保持原写法）。只动首个非空行。"""
+    lines = read_text(path).splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        m = re.match(rf"^(\s*)第([{CN_NUM}]+)(章.*)$", line.rstrip("\n"))
+        if not m:
+            return
+        v = cn2int(m.group(2))
+        if v is None:
+            return
+        new = str(v + 1) if m.group(2).isdigit() else int2cn(v + 1)
+        lines[i] = m.group(1) + "第" + new + m.group(3) + ("\n" if line.endswith("\n") else "")
+        path.write_text("".join(lines), encoding="utf-8")
+        return
+
+
+def _shift_md_refs(text: str, after: int) -> tuple[str, int]:
+    """把 markdown 文本里 >after 的章号引用 +1，返回（新文本, 改动处数）。
+
+    覆盖：第N章（阿/中文数字）、标题行 NNNNx、列表项首 NNNNx、
+    frontmatter 值、（NNNN）括注、[[NNNN]]、行尾“关键词：NNNN”，
+    以及表头含“章”的表格列内的章号集合（0005 / 0001-0030 / 0005、0008）。
+    正文语义（故事内年份、字数等）不在这类写法里，不动。
+    """
+    cnt = 0
+
+    def bump_num(raw: str) -> str | None:
+        nonlocal cnt
+        v = cn2int(raw)
+        if v is None or v <= after:
+            return None
+        cnt += 1
+        return f"{v + 1:0{len(raw)}d}" if raw.isdigit() else int2cn(v + 1)
+
+    def bump_tok(raw: str) -> str:
+        nonlocal cnt
+        m = re.fullmatch(r"(\d{4})([a-z]?)", raw)
+        if not m or int(m.group(1)) <= after:
+            return raw
+        cnt += 1
+        return f"{int(m.group(1)) + 1:04d}{m.group(2)}"
+
+    def rep(g: int):
+        def inner(m: re.Match) -> str:
+            raw = m.group(g)
+            new = bump_tok(raw) if re.fullmatch(r"\d{4}[a-z]?", raw) else (bump_num(raw) or raw)
+            if new == raw:
+                return m.group(0)
+            return (m.group(0)[:m.start(g) - m.start(0)] + new
+                    + m.group(0)[m.end(g) - m.start(0):])
+        return inner
+
+    text = re.sub(rf"第\s*([{CN_NUM}]+)\s*章", rep(1), text)
+    text = re.sub(r"(?m)^(#{1,6}\s+)(\d{4}[a-z]?)(?=\s|$)", rep(2), text)
+    text = re.sub(r"(?m)^(\s*[-*]\s+)(\d{4}[a-z]?)(?=[\s:：，,、]|$)", rep(2), text)
+    text = re.sub(r"(?m)^(\s*[A-Za-z_][\w-]*\s*:\s*)(\d{4}[a-z]?)\s*$", rep(2), text)
+    text = re.sub(r"([(（]\s*)(\d{4}[a-z]?)(\s*[)）])", rep(2), text)
+    text = re.sub(r"(\[\[)(\d{4}[a-z]?)(]])", rep(2), text)
+    text = re.sub(
+        r"(?m)^([^\n|]{0,40}(?:章节|进度|截至|首现|出场|埋设|回收)[^\n:：]{0,12}[:：]\s*)(\d{4}[a-z]?)\s*$",
+        rep(2), text)
+
+    # 表格：只改表头含“章”的列；格内所有 NNNNx 记号（含区间/列举）一起平移
+    lines = text.splitlines()
+    chap_cols: set[int] = set()
+    in_table = False
+    for i, line in enumerate(lines):
+        if not line.lstrip().startswith("|"):
+            in_table = False
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if not in_table:
+            # 章号列：表头含“章”但不是章名/标题/名称（避免误伤章名格里的年份等数字）
+            chap_cols = {j for j, c in enumerate(cells)
+                         if "章" in c and not any(x in c for x in ("名", "题", "称"))}
+            in_table = True
+            continue
+        if all(re.fullmatch(r":?-+:?", c or "-") for c in cells):
+            continue
+        raw = line.split("|")
+        for j in chap_cols:
+            if j + 1 < len(raw):
+                raw[j + 1] = re.sub(r"(?<!第)\d{4}[a-z]?", lambda m: bump_tok(m.group(0)), raw[j + 1])
+        lines[i] = "|".join(raw)
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else ""), cnt
+
+
+def cmd_insert(a: argparse.Namespace) -> None:
+    root = Path(a.root)
+    files = chapter_files(root)
+
+    if a.extra:
+        anchor = a.num
+        if anchor < 0:
+            sys.exit("锚点章号不能为负")
+        main_nums = {n for n, s, _ in files if not s}
+        if anchor and anchor not in main_nums:
+            sys.exit(f"没有第 {anchor} 章（番外要锚在已有主线章之后；0 表示全书开头）")
+        used = sorted(s for n, s, _ in files if n == anchor and s)
+        letter = next((c for c in "abcdefghijklmnopqrstuvwxyz" if c not in used), None)
+        if letter is None:
+            sys.exit(f"第 {anchor} 章后的番外位已用满（a-z）")
+        slot = f"{anchor:04d}{letter}"
+        anchor_path = next((p for n, s, p in files if n == anchor and not s), None)
+        vol_dir = anchor_path.parent if anchor_path else root / "chapters" / "vol01"
+        seq_cn = int2cn(ord(letter) - ord("a") + 1)
+        print(f"番外位：{slot}（首行写作“番外{seq_cn} 章名”或“番外 章名”，楔子/序章亦可）")
+        print(f"建议路径：{vol_dir.relative_to(root) / f'{slot}-章名.txt'}")
+        if used:
+            print(f"该锚点已有番外：{'、'.join(f'{anchor:04d}{x}' for x in used)}")
+        return
+
+    mains = [(n, p) for n, s, p in files if not s]
+    if not mains:
+        sys.exit("还没有章节，无需插入")
+    hi = mains[-1][0]
+    if a.num >= hi:
+        sys.exit(f"第 {a.num} 章已是最后一章（共 {hi} 章），直接续写即可")
+    if a.num < 0:
+        sys.exit("章号不能为负")
+
+    # >N 的章节文件（番外随锚点一起移动）与章纲重编号；从大到小改名避免覆盖
+    moving = sorted(((n, s, p) for n, s, p in files if n > a.num), reverse=True)
+    renames = [(p, p.with_name(f"{n + 1:04d}{s}-{p.name.split('-', 1)[1]}"), s)
+               for n, s, p in moving]
+    outlines = []
+    oc = root / "outline" / "chapters"
+    if oc.is_dir():
+        for p in oc.glob("*.md"):
+            m = re.match(r"^(\d{4,})([a-z]?)\.md$", p.name)
+            if m and int(m.group(1)) > a.num:
+                outlines.append(
+                    (p, p.with_name(f"{int(m.group(1)) + 1:04d}{m.group(2)}.md")))
+        outlines.sort(key=lambda t: t[0].name, reverse=True)
+
+    if a.dry_run:
+        for old, new, _ in renames + [(o, n, "") for o, n in outlines]:
+            print(f"{old.relative_to(root)} -> {new.relative_to(root)}")
+        print(f"（预览）第 {a.num} 章后空出 {a.num + 1:04d} 位："
+              f"移动 {len(renames)} 章、{len(outlines)} 份章纲，并同步 memory/outline/lore/AGENTS.md 引用")
+        return
+
+    for old, new, s in renames:
+        old.rename(new)
+        if not s:
+            _retitle_chapter(new)
+    for old, new in outlines:
+        old.rename(new)
+
+    touched = []
+    targets = [p for d in ("memory", "outline", "lore")
+               for p in (root / d).rglob("*.md") if not p.is_symlink()]
+    agents = root / "AGENTS.md"
+    if agents.exists():
+        targets.append(agents)
+    for p in targets:
+        new_text, n = _shift_md_refs(read_text(p), a.num)
+        if n:
+            p.write_text(new_text, encoding="utf-8")
+            touched.append(f"{p.relative_to(root)}（{n} 处）")
+
+    print(f"已在第 {a.num} 章后空出 {a.num + 1:04d} 位：移动 {len(renames)} 章、{len(outlines)} 份章纲")
+    if touched:
+        print(f"同步引用 {len(touched)} 个文件：" + "、".join(touched[:8]))
+    print("请抽查引用更新是否符合预期（drafts/ 与正文内容不会改动）")
 
 
 def cmd_validate(a: argparse.Namespace) -> None:
@@ -592,13 +841,32 @@ def cmd_validate(a: argparse.Namespace) -> None:
             if stale:
                 warns.append(f"{len(stale)} 个 glossary 条目的设定文件路径无效：{', '.join(stale[:5])}")
 
-    # 4. 章节编号连续性
+    # 4. 章节编号连续性与番外规范
     files = chapter_files(root)
     if files:
-        nums = [n for n, _ in files]
-        missing = sorted(set(range(1, nums[-1] + 1)) - set(nums))
-        if missing:
-            warns.append(f"章节编号不连续，缺少：{', '.join(f'{m:04d}' for m in missing[:10])}")
+        nums = [n for n, s, _ in files if not s]
+        if nums:
+            missing = sorted(set(range(1, nums[-1] + 1)) - set(nums))
+            if missing:
+                warns.append(f"章节编号不连续，缺少：{', '.join(f'{m:04d}' for m in missing[:10])}")
+        main_nums = set(nums)
+        no_anchor = [f"{n:04d}{s}" for n, s, _ in files
+                     if s and n and n not in main_nums]
+        if no_anchor:
+            warns.append(f"{len(no_anchor)} 个番外没有对应主线章：{', '.join(no_anchor[:10])}")
+        seq: dict[int, list[str]] = {}
+        for n, s, _ in files:
+            if s:
+                seq.setdefault(n, []).append(s)
+        for n, letters in sorted(seq.items()):
+            expected = [chr(ord("a") + i) for i in range(len(letters))]
+            if letters != expected:
+                warns.append(f"第 {n} 章的番外编号不连续：{''.join(letters)}（应为 {''.join(expected)}）")
+    stray_txt = [p.relative_to(root).as_posix()
+                 for p in (root / "chapters").rglob("*.txt")
+                 if not CHAPTER_FILE_RE.match(p.name)] if (root / "chapters").is_dir() else []
+    if stray_txt:
+        warns.append(f"{len(stray_txt)} 个章节文件名不规范（未被识别）：{', '.join(stray_txt[:5])}")
 
     # 5. frontmatter 检查：覆盖所有分类目录（含自定义、嵌套），_schema.md 等元文件除外
     bad_fm: list[tuple[Path, str]] = []
@@ -746,7 +1014,7 @@ def cmd_category(a: argparse.Namespace) -> None:
 def cmd_export(a: argparse.Namespace) -> None:
     root = Path(a.root)
     lo, hi = parse_range(a.range) if a.range else (0, sys.maxsize)
-    files = [(n, p) for n, p in chapter_files(root) if lo <= n <= hi]
+    files = [(n, p) for n, _, p in chapter_files(root) if lo <= n <= hi]
 
     if a.volumes:
         vol_lo, vol_hi = parse_range(a.volumes)
@@ -821,11 +1089,17 @@ def main() -> None:
     p.add_argument("--first", action="store_true", help="只显示首次出现的章节")
     p.set_defaults(fn=cmd_find)
 
-    p = sub.add_parser("split", help="整本 txt 切分成章节文件")
+    p = sub.add_parser("split", help="整本 txt 切分成章节文件（番外识别为 NNNNx）")
     p.add_argument("file")
     p.add_argument("--start", type=int, default=1, help="起始章号")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_split)
+
+    p = sub.add_parser("insert", help="在第 N 章后空出一个章位（重编号并同步引用）")
+    p.add_argument("num", type=int, help="在此章号之后插入（0 表示全书开头）")
+    p.add_argument("--extra", action="store_true", help="不插主线章，返回该锚点的空闲番外位")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(fn=cmd_insert)
 
     p = sub.add_parser("category", help="设定分类注册表：list / add / rename")
     p.add_argument("action", choices=["list", "add", "rename"])
