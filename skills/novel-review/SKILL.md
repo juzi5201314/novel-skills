@@ -14,7 +14,7 @@ novel-review 是一个诊断工具，目标是在发表前找出问题。分两�
 ### 流程
 
 1. 读取正文（chapters/volNN/NNNN-章名.txt）
-2. 读取上下文：章纲 → 卷纲 → 前后两章 → 相关 lore 文件 → memory/state.md + threads.md
+2. 读取上下文：「规则」节场景表里的 review 规则文件（若有）→ 章纲 → 卷纲 → 前后两章 → 相关 lore 文件 → memory/state.md + threads.md
 3. 逐维度检查（见下文"检查维度"）
 4. 生成报告：按维度列出问题、严重程度（错误/警告/建议）、行号与原文、修改建议
 

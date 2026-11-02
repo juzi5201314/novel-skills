@@ -2,6 +2,7 @@
 本文件每次会话都会自动注入给 agent（CLAUDE.md 是指向它的软链接）。
 只放"每次写作都必须知道"的机制与索引，控制在 150 行内；细节放 lore/ outline/ memory/，这里只留指针。
 由 novel-init 生成并持续更新；"当前进度"由 novel-chapter 在每章定稿后更新。
+「规则」节是 novel.py 的编译产物（源：本书 rules/ 与全局 ~/.novel-skills/rules/），块内不要手改。
 不预设作品内容：类型、文风、主角、力量体系等由用户决定后补写，不要替用户默认。
 -->
 # 《{书名}》
@@ -26,8 +27,14 @@
 
 ## 硬规则
 
-写任何正文前必须遵守。新增规则写在这里，不要散落到别处。
+写任何正文前必须遵守。快捷条目写在这里；要跨书共享或按场景生效的写成 rules/*.md（见下方「规则」节）。
 （待补充）
+
+<!-- novel:rules -->
+## 规则
+
+（暂无规则文件。在本书 rules/ 或全局 ~/.novel-skills/rules/ 放 .md，可选 frontmatter：scope 默认 always，可选 writing/review/lore；priority 默认 0。由 novel.py 编译到这里。）
+<!-- /novel:rules -->
 
 ## 设定分类
 
@@ -54,6 +61,7 @@
 | memory/timeline.md | 故事内时间线 |
 | memory/summaries/volNN.md | 逐章摘要 |
 | drafts/ | 草稿、审稿报告 |
+| rules/ | 本书规则文件（.md），编译进上方「规则」节；全局共享放 ~/.novel-skills/rules/ |
 
 ## 工作流
 

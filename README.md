@@ -110,6 +110,7 @@ C) 林川突然问："外头那鼓，是你派人敲的？"
 ```
 你的书/
 ├── AGENTS.md              # 作品档案（自动注入）
+├── rules/                 # 本书规则文件；全局共享放 ~/.novel-skills/rules/
 ├── chapters/              # 正文（纯文本，可直接发布）
 │   └── vol01/
 │       └── 0001-章名.txt
@@ -230,6 +231,9 @@ A: agent 会在下次写作时检测到未同步的章节，自动补同步。
 
 **Q: AGENTS.md 会不会越来越长？**  
 A: agent 会定期归档已完成卷的规则到 `lore/archive/`，保持 AGENTS.md 在 150 行内。
+
+**Q: 写作规则能跨书共享吗？**  
+A: 能。本书规则放 `rules/*.md`，全局规则放 `~/.novel-skills/rules/*.md`；`novel.py` 在每次调用时自动把它们编译进 AGENTS.md「规则」节——`scope: always` 直接注入，`writing/review/lore` 按需加载，不用手动同步。
 
 **Q: 可以管理多本书吗？**  
 A: 一书一仓库。多本书放不同目录，各自独立。

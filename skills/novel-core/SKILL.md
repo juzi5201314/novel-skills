@@ -14,8 +14,9 @@ description: 网文项目的目录约定、文件格式、章节命名（含番�
 书根目录就是项目根目录（一本书一个仓库）。
 
 ```text
-AGENTS.md                    # 每次会话自动注入：作品档案、硬规则、设定分类注册表、目录索引、当前进度
+AGENTS.md                    # 每次会话自动注入：作品档案、硬规则、规则节、设定分类注册表、目录索引、当前进度
 CLAUDE.md -> AGENTS.md       # 软链接，给 Claude Code 用
+rules/                       # 本书规则文件；全局共享规则放 ~/.novel-skills/rules/
 chapters/
   vol01/0001-初入洪荒.txt     # 正文，纯文本
   vol01/0001a-番外日常.txt    # 番外，锚在第 0001 章后
@@ -38,6 +39,19 @@ drafts/                      # 草稿、互动写作记录、审稿报告、检�
 ```
 
 新建项目用 `novel.py init` 建通用骨架（不含设定分类），分类由 novel-init 询问用户后用 `novel.py category add` 逐个添加。设定分类不写死：lore/ 下放什么目录、目录里记录什么字段，都由这本书的 AGENTS.md"设定分类"注册表和各目录的 `_schema.md` 决定。
+
+## 规则文件（rules/ 与 ~/.novel-skills/rules/）
+
+想跨书共享的规则、或不想挤在 AGENTS.md 里的规则，写成 markdown 文件：
+
+- 本书规则：`<书>/rules/*.md`；全局规则：`~/.novel-skills/rules/*.md`（对所有的书生效，可用环境变量 `NOVEL_RULES_HOME` 改位置）。`_` 开头的文件不编译。
+- frontmatter 可不写。可选字段：`scope`（默认 `always`，可选 `writing`/`review`/`lore`，或列表 `[writing, review]`）、`priority`（小的排前，默认 0）、`desc`（一句话说明，显示在场景表）。
+- `scope: always` 的正文编译进 AGENTS.md「规则」节，随 AGENTS.md 注入；其余 scope 不进正文，只列在该节末尾的场景表里——写章节前读 writing、审稿前读 review、建设定前读 lore。
+- 同名文件本书覆盖全局。
+- 「规则」节是 novel.py 的编译产物，手改块内会被覆盖；要改规则改源文件。
+- 不用手动同步：每次 `novel.py` 调用前自动检查，源文件变了就重编译，并把新注入层打到输出里（当前会话立即拿到新规则，不等下次注入）。agent 自己改了 rules/*.md 后，跑一次 `novel.py rules --sync` 查看生效结果。
+
+AGENTS.md「硬规则」节与「规则」节并存、地位相同：零散快捷的本书规则写「硬规则」，要复用/共享/分场景的写规则文件。
 
 ## 命名
 
@@ -125,7 +139,7 @@ drafts/                      # 草稿、互动写作记录、审稿报告、检�
 
 ## 读取预算
 
-写一章需要的上下文（按优先级）：AGENTS.md（已注入）→ 本章章纲 → memory/state.md → memory/threads.md 中“进行中”的条目 → 最近 3 章摘要 → 上一章最后 1500 字左右 → 本章出场实体的 lore 文件。
+写一章需要的上下文（按优先级）：AGENTS.md（已注入）→ 「规则」节场景表里的 writing 文件（若有）→ 本章章纲 → memory/state.md → memory/threads.md 中“进行中”的条目 → 最近 3 章摘要 → 上一章最后 1500 字左右 → 本章出场实体的 lore 文件。
 
 不要为了“保险”通读几十章正文。需要查前文细节时用 `novel.py find` 精确定位，再读命中位置附近。大范围梳理交给 novel-explore 技能。
 
@@ -151,6 +165,9 @@ python3 $N split 旧稿.txt --dry-run            # 整本 txt 按“第X章”�
 python3 $N insert 19 --dry-run                # 预览：第 19 章后空出 0020 位，>19 的章节与章纲重编号
 python3 $N insert 19                          # 执行插章：重编号 + 同步 memory/outline/lore/AGENTS.md 章号引用
 python3 $N insert 19 --extra                  # 第 19 章的空闲番外位（如 0019c；0 为全书开头的楔子位）
+python3 $N rules                              # 规则文件清单；源文件变化时自动重编译「规则」节
+python3 $N rules --sync                       # 同时展示当前注入层规则
+python3 $N rules --check                      # 只检查不写入，「规则」节过期时退出码 1
 python3 $N validate [--fix]                   # 完整性检查；--fix 补 glossary 和未登记目录
 python3 $N export -o 全书.txt --volumes 1-3    # 合并导出
 ```

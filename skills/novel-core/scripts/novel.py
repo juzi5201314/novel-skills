@@ -11,12 +11,14 @@
   split     把整本 txt 按"第X章"切分成标准章节文件（番外/外篇/楔子识别为 NNNNx）
   insert    在第 N 章后空出一个主线章位（重编号并同步引用）；--extra 取该锚点的空闲番外位
   category  设定分类注册表：list / add / rename（注册表在 AGENTS.md"设定分类"一节）
+  rules     规则文件（本书 rules/ + 全局 ~/.novel-skills/rules/）编译进 AGENTS.md「规则」节
   validate  检查项目完整性（必填字段、分类注册表、glossary、frontmatter、编号连续性）
   export    合并全书为单个 txt，可按卷或章号范围导出
 """
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import statistics
 import sys
@@ -24,6 +26,14 @@ from pathlib import Path
 from datetime import datetime
 
 TEMPLATES = Path(__file__).resolve().parent.parent / "assets" / "templates"
+
+# 规则文件：本书 rules/*.md + 全局 ~/.novel-skills/rules/*.md（后者可用 NOVEL_RULES_HOME 改位置）。
+# scope: always 编译进 AGENTS.md「规则」节随文件注入；writing/review/lore 只进该节的场景表按需读。
+GLOBAL_RULES_DIR = Path(os.environ.get("NOVEL_RULES_HOME", Path.home() / ".novel-skills" / "rules"))
+RULES_BEGIN = "<!-- novel:rules -->"
+RULES_END = "<!-- /novel:rules -->"
+RULE_SCOPES = ("always", "writing", "review", "lore")
+_RULES_PAT = re.compile(re.escape(RULES_BEGIN) + ".*?" + re.escape(RULES_END), re.S)
 
 # 只建与作品内容无关的通用骨架；设定分类由用户决定后用 category add 添加
 DIRS = (
@@ -34,6 +44,7 @@ DIRS = (
     "lore/images",
     "memory/summaries",
     "drafts",
+    "rules",
 )
 # 目标路径 -> 模板文件名
 SEEDS = {
@@ -316,6 +327,118 @@ def frontmatter(path: Path) -> dict[str, str | list[str]]:
     return data
 
 
+def _collect_rules(root: Path) -> tuple[list[dict], list[str]]:
+    """收集全局（~/.novel-skills/rules/）与本书（rules/）的规则文件；本书同名文件覆盖全局，
+    "_" 开头的不参与。frontmatter 可不写：缺省 scope=always、priority=0。
+    返回（按 priority、文件名排序的规则列表, 警告列表）。"""
+    found: dict[str, tuple[str, Path]] = {}
+    for d, rel in ((GLOBAL_RULES_DIR, "~/.novel-skills/rules"), (root / "rules", "rules")):
+        if d.is_dir():
+            for p in sorted(d.glob("*.md")):
+                if not p.name.startswith("_"):
+                    found[p.stem] = (f"{rel}/{p.name}", p)
+    rules, warns = [], []
+    for stem, (rel, p) in found.items():
+        try:
+            fm, text = frontmatter(p), read_text(p)
+        except UnicodeDecodeError:
+            warns.append(f"{rel}: 不是 UTF-8 编码，已跳过")
+            continue
+        raw = fm.get("scope", "always")
+        items = raw if isinstance(raw, list) else [raw]
+        scopes = {str(s).strip().lower() for s in items}
+        if bad := scopes - set(RULE_SCOPES):
+            warns.append(f"{rel}: 未知 scope {sorted(bad)}，可选 {'/'.join(RULE_SCOPES)}")
+            scopes -= bad
+        if not scopes:
+            scopes = {"always"}
+        try:
+            pri = int(str(fm.get("priority", 0)))
+        except ValueError:
+            warns.append(f"{rel}: priority 不是整数，按 0 处理")
+            pri = 0
+        body = re.sub(r"\A---\n.*?\n---\n?", "", text, count=1, flags=re.S).strip()
+        rules.append({"rel": rel, "stem": stem, "scopes": scopes, "priority": pri,
+                      "body": body, "desc": str(fm.get("desc") or fm.get("name") or "")})
+    rules.sort(key=lambda r: (r["priority"], r["stem"]))
+    return rules, warns
+
+
+def _rules_block(root: Path) -> str:
+    """AGENTS.md「规则」节的受管块（含 ## 标题与标记，整段由本函数生成）。"""
+    rules, _ = _collect_rules(root)
+    lines = [RULES_BEGIN, "## 规则", ""]
+    if not rules:
+        lines.append("（暂无规则文件。在本书 rules/ 或全局 ~/.novel-skills/rules/ 放 .md，"
+                     "可选 frontmatter：scope 默认 always，可选 writing/review/lore；priority 默认 0。"
+                     "由 novel.py 编译到这里。）")
+    else:
+        lines += ["由 `novel.py rules` 从本书 rules/ 与全局 ~/.novel-skills/rules/ 编译；"
+                  "改规则请改源文件，块内手改会被覆盖。", ""]
+        for r in rules:
+            if "always" in r["scopes"] and r["body"]:
+                lines += [f"<!-- {r['rel']} -->", r["body"], ""]
+        scoped = [r for r in rules if "always" not in r["scopes"]]
+        if scoped:
+            lines += ["### 场景规则（做对应工作前读取）", "", "| 场景 | 文件 | 说明 |", "|---|---|---|"]
+            for r in scoped:
+                sc = "、".join(s for s in RULE_SCOPES[1:] if s in r["scopes"])
+                lines.append(f"| {sc} | `{r['rel']}` | {r['desc']} |")
+    lines.append(RULES_END)
+    return "\n".join(lines)
+
+
+def _announce_rules(root: Path, changed: bool) -> None:
+    """把当前注入层打到输出：本会话内 AGENTS.md 注入的还是旧内容，新规则经工具输出立即进上下文。"""
+    rules, warns = _collect_rules(root)
+    always = [r for r in rules if "always" in r["scopes"] and r["body"]]
+    print(f"[规则] AGENTS.md「规则」节{'已重编译' if changed else '已是最新'}。当前注入层：")
+    if always:
+        for r in always:
+            print(f"<!-- {r['rel']} -->")
+            print(r["body"])
+    else:
+        print("（空）")
+    scoped = [r["rel"] for r in rules if "always" not in r["scopes"]]
+    if scoped:
+        print("[规则] 场景规则（按需读取）：" + "、".join(scoped))
+    n = sum(r["body"].count("\n") + 1 for r in always)
+    if n > 60:
+        print(f"[规则] 注入层 {n} 行偏多：AGENTS.md 建议控制在 150 行，细则可改 scope 按需文件")
+    for w in warns:
+        print(f"[规则] {w}")
+
+
+def _sync_rules(root: Path, announce: bool = False) -> bool:
+    """rules/ 源文件与 AGENTS.md「规则」块不一致时重编译，返回是否有写入。"""
+    agents = root / "AGENTS.md"
+    if not agents.exists():
+        return False
+    text = read_text(agents)
+    rules, _ = _collect_rules(root)
+    matches = list(_RULES_PAT.finditer(text))
+    if not rules and not matches:
+        return False
+    block = _rules_block(root)
+    if matches:
+        parts, last = [], 0
+        for i, m in enumerate(matches):  # 只保留第一个块，多余的（手贴出来的）清掉
+            parts += [text[last:m.start()], block if i == 0 else ""]
+            last = m.end()
+        parts.append(text[last:])
+        new = "".join(parts)
+    else:
+        anchor = re.search(r"(?m)^##\s*(?:设定分类|目录索引|工作流|当前进度)", text)
+        new = (text[:anchor.start()].rstrip() + "\n\n" + block + "\n\n" + text[anchor.start():]
+               if anchor else text.rstrip() + "\n\n" + block + "\n")
+    if new == text:
+        return False
+    agents.write_text(new, encoding="utf-8")
+    if announce:
+        _announce_rules(root, changed=True)
+    return True
+
+
 def cmd_init(a: argparse.Namespace) -> None:
     root = Path(a.root)
     for d in DIRS:
@@ -333,6 +456,11 @@ def cmd_init(a: argparse.Namespace) -> None:
     else:
         link.symlink_to("AGENTS.md")
         print("创建：CLAUDE.md -> AGENTS.md")
+    if not GLOBAL_RULES_DIR.is_dir():
+        GLOBAL_RULES_DIR.mkdir(parents=True)
+        print(f"创建：{GLOBAL_RULES_DIR}（全局规则目录，对所有的书生效，可选）")
+    if _sync_rules(root):
+        print("更新：AGENTS.md「规则」节按 rules/ 与全局规则编译")
     print("提示：骨架不含设定分类。问清用户后用 'category add 中文名 目录名 [--from 模板]' 按需添加。")
 
 
@@ -990,6 +1118,10 @@ def cmd_validate(a: argparse.Namespace) -> None:
     if len(bad_fm) > 5:
         errors.append(f"...其余 {len(bad_fm) - 5} 个文件也有 frontmatter 问题")
 
+    # 规则文件 frontmatter 合法性（scope/priority 写错在编译期不报错，在这里提示）
+    if GLOBAL_RULES_DIR.is_dir() or (root / "rules").is_dir():
+        warns += _collect_rules(root)[1]
+
     # 6. 自动修复
     if a.fix:
         if missing_in_glossary and glossary_path.exists():
@@ -1115,6 +1247,38 @@ def cmd_category(a: argparse.Namespace) -> None:
                 print(f"注册表分类名：→《{a.name}》")
 
 
+def cmd_rules(a: argparse.Namespace) -> None:
+    root = Path(a.root)
+    rules, warns = _collect_rules(root)
+    if a.check:  # 只报告不写入
+        cur = None
+        agents = root / "AGENTS.md"
+        if agents.exists():
+            m = _RULES_PAT.search(read_text(agents))
+            cur = m.group(0) if m else None
+        expected = _rules_block(root) if (rules or cur is not None) else None
+        if cur != expected:
+            print("「规则」节过期：运行 novel.py rules 同步")
+            sys.exit(1)
+        print("「规则」节已是最新")
+        return
+    if rules:
+        print("== 规则文件（编译顺序）==")
+        for r in rules:
+            sc = "+".join(s for s in RULE_SCOPES if s in r["scopes"])
+            print(f"  [{sc}] {r['rel']}" + (f"  — {r['desc']}" if r["desc"] else ""))
+    else:
+        print("没有规则文件。本书放 rules/*.md，全局放 ~/.novel-skills/rules/*.md")
+    for w in warns:
+        print(f"[警告] {w}")
+    if _sync_rules(root, announce=True):
+        return  # 已打印新注入层
+    if a.sync:
+        _announce_rules(root, changed=False)
+    else:
+        print("AGENTS.md「规则」节已是最新")
+
+
 def cmd_export(a: argparse.Namespace) -> None:
     root = Path(a.root)
     lo, hi = parse_range(a.range) if a.range else (0, sys.maxsize)
@@ -1222,6 +1386,11 @@ def main() -> None:
     p.add_argument("--name", help="rename 时的新分类名（不改可省略）")
     p.set_defaults(fn=cmd_category)
 
+    p = sub.add_parser("rules", help="规则文件清单与编译（rules/ + ~/.novel-skills/rules/ → AGENTS.md「规则」节）")
+    p.add_argument("--sync", action="store_true", help="同时展示当前注入层")
+    p.add_argument("--check", action="store_true", help="只检查不写入，过期退出码 1")
+    p.set_defaults(fn=cmd_rules)
+
     p = sub.add_parser("validate", help="检查项目完整性")
     p.add_argument("--fix", action="store_true", help="自动修复简单问题")
     p.set_defaults(fn=cmd_validate)
@@ -1233,6 +1402,10 @@ def main() -> None:
     p.set_defaults(fn=cmd_export)
 
     a = ap.parse_args()
+    # 惰性规则编译：借每次 novel.py 调用检查一次，源文件变了就重编译并把新注入层打到输出。
+    # init 播完种子后自己调 _sync_rules；rules 子命令自己处理（--check 必须不写入）。
+    if a.cmd not in ("init", "rules"):
+        _sync_rules(Path(a.root), announce=True)
     a.fn(a)
 
 
