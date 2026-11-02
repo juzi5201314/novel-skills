@@ -7,6 +7,7 @@
   stats     统计章节字数
   lint      检查单章格式与 AI 味高频表达
   find      在正文中检索实体/关键词（--entity 自动带上 lore 里的别名）
+  similar   相似段落查重：字符三元组找措辞复用，防套路重复（措辞级，非语义）
   split     把整本 txt 按"第X章"切分成标准章节文件（番外/外篇/楔子识别为 NNNNx）
   insert    在第 N 章后空出一个主线章位（重编号并同步引用）；--extra 取该锚点的空闲番外位
   category  设定分类注册表：list / add / rename（注册表在 AGENTS.md"设定分类"一节）
@@ -95,6 +96,11 @@ AI_PATTERNS = [
     (r"弥漫着|交织|涟漪|璀璨|深邃|低语", "AI 偏爱词"),
 ]
 AI_RES = [(re.compile(p), label) for p, label in AI_PATTERNS]
+
+# 相似度检测（similar）：去标点空白后取字符三元组做指纹，查措辞级复用
+SIM_PUNCT_RE = re.compile(r"[\s　，。！？；：、“”‘’（）《》【】「」…—·,.?!;:'\"()\[\]<>_-]+")
+SIM_NGRAM = 3
+SIM_MIN_LEN = 15  # 归一化后短于该长度的段落不生成指纹（太短没有可比性）
 
 
 def word_count(text: str) -> tuple[int, int]:
@@ -530,6 +536,103 @@ def cmd_find(a: argparse.Namespace) -> None:
         if a.first:
             break
     print(f"共 {total} 处；检索词：{'、'.join(ordered)}")
+
+
+def _sim_paras(path: Path) -> list[dict]:
+    """把章节切成可比较段落，返回 [{line, text, grams}]；标题行与过短段跳过。"""
+    lines = read_text(path).splitlines()
+    _, hline = split_header(lines)
+    out = []
+    for i, line in enumerate(lines, 1):
+        if i <= hline or not line.strip():
+            continue
+        norm = SIM_PUNCT_RE.sub("", line)
+        if len(norm) < SIM_MIN_LEN:
+            continue
+        grams = {norm[j:j + SIM_NGRAM] for j in range(len(norm) - SIM_NGRAM + 1)}
+        if grams:
+            out.append({"line": i, "text": line.strip(), "grams": grams})
+    return out
+
+
+def cmd_similar(a: argparse.Namespace) -> None:
+    root = Path(a.root)
+    lo, hi = parse_range(a.range)
+    corpus: list[dict] = []
+    for n, s, p in chapter_files(root):
+        if lo <= n <= hi:
+            for para in _sim_paras(p):
+                para["ref"] = f"{n:04d}{s}:L{para['line']}"
+                para["src"] = p.resolve()
+                corpus.append(para)
+    if len(corpus) < 2:
+        sys.exit("可比较的段落不足（chapters/ 为空或段落都太短）")
+
+    # 过滤通用腔：出现在 >15% 段落里的三元组没有区分度（"的时候"级）
+    df: dict[str, int] = {}
+    for para in corpus:
+        for g in para["grams"]:
+            df[g] = df.get(g, 0) + 1
+    common = {g for g, c in df.items() if c > max(30, int(0.15 * len(corpus)))}
+    for para in corpus:
+        para["grams"] -= common
+    corpus = [para for para in corpus if para["grams"]]
+
+    index: dict[str, list[int]] = {}
+    for pid, para in enumerate(corpus):
+        for g in para["grams"]:
+            index.setdefault(g, []).append(pid)
+
+    def similar(grams: set, skip: set) -> list[tuple[float, int]]:
+        """倒排索引收候选，对候选算 Jaccard；返回 (score, pid) 降序。"""
+        hits: dict[int, int] = {}
+        for g in grams:
+            for pid in index.get(g, ()):
+                if pid not in skip:
+                    hits[pid] = hits.get(pid, 0) + 1
+        out = []
+        for pid, shared in hits.items():
+            union = len(grams) + len(corpus[pid]["grams"]) - shared
+            if shared / union >= a.min_score:
+                out.append((shared / union, pid))
+        return sorted(out, reverse=True)
+
+    def snip(text: str) -> str:
+        return text[:38] + "…" if len(text) > 38 else text
+
+    if a.all:
+        pairs = []
+        for i, para in enumerate(corpus):
+            pairs += [(score, i, pid) for score, pid in similar(para["grams"], {i}) if pid > i]
+        pairs.sort(reverse=True)
+        print(f"== 全书查重：{len(corpus)} 段中 {len(pairs)} 对相似（≥{a.min_score}），Top {a.top} ==")
+        for score, i, pid in pairs[: a.top]:
+            pa, pb = corpus[i], corpus[pid]
+            print(f"{score:.2f}  {pa['ref']} ↔ {pb['ref']}")
+            print(f"    {snip(pa['text'])}")
+            print(f"    {snip(pb['text'])}")
+        return
+
+    if not a.file:
+        sys.exit("给文件路径查单章/草稿，或用 --all 全书两两查重")
+    qpath = Path(a.file)
+    if not qpath.exists():
+        sys.exit(f"文件不存在：{qpath}")
+    own = {i for i, c in enumerate(corpus) if c["src"] == qpath.resolve()}
+    pairs = []
+    for para in _sim_paras(qpath):
+        pairs += [(score, para, corpus[pid]) for score, pid in similar(para["grams"] - common, own)]
+    pairs.sort(key=lambda t: -t[0])
+    try:
+        qlabel = qpath.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        qlabel = str(qpath)
+    print(f"== {qlabel}：与全书相似段落（≥{a.min_score}）==")
+    for score, qa, pb in pairs[: a.top]:
+        print(f"{score:.2f}  L{qa['line']} ↔ {pb['ref']}")
+        print(f"    {snip(qa['text'])}")
+        print(f"    {snip(pb['text'])}")
+    print(f"共 {len(pairs)} 处（--min-score/--top 调整）")
 
 
 def cmd_split(a: argparse.Namespace) -> None:
@@ -1088,6 +1191,14 @@ def main() -> None:
     p.add_argument("--count", action="store_true", help="只输出每章命中行数")
     p.add_argument("--first", action="store_true", help="只显示首次出现的章节")
     p.set_defaults(fn=cmd_find)
+
+    p = sub.add_parser("similar", help="相似段落查重：单章对全书，或 --all 全书两两")
+    p.add_argument("file", nargs="?", help="待查章节/草稿文件")
+    p.add_argument("--all", action="store_true", help="全书段落两两查重")
+    p.add_argument("--range", help="章号范围，如 1-50")
+    p.add_argument("--top", type=int, default=15, help="最多显示条数")
+    p.add_argument("--min-score", type=float, default=0.25, help="Jaccard 相似度阈值 0-1")
+    p.set_defaults(fn=cmd_similar)
 
     p = sub.add_parser("split", help="整本 txt 切分成章节文件（番外识别为 NNNNx）")
     p.add_argument("file")

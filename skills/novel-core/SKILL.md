@@ -145,6 +145,7 @@ python3 $N find --entity 鸿钧                  # 按 name + aliases 检索所�
 python3 $N find 紫霄宫 造化玉碟 --range 1-80 --count
 python3 $N find 鸿钧 --first                   # 首次出现在哪一章
 python3 $N find --all 混沌钟                   # 连 outline/ lore/ memory/ 一起搜
+python3 $N similar chapters/vol01/0008-x.txt --top 10   # 该章对全书查重；--all 全书两两查重
 python3 $N split 旧稿.txt --dry-run            # 整本 txt 按“第X章”切成标准章节文件（番外识别为 NNNNx）
 python3 $N insert 19 --dry-run                # 预览：第 19 章后空出 0020 位，>19 的章节与章纲重编号
 python3 $N insert 19                          # 执行插章：重编号 + 同步 memory/outline/lore/AGENTS.md 章号引用
