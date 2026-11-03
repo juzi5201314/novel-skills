@@ -66,6 +66,8 @@
 ## 工作流
 
 - 写章节 → novel-chapter；审稿 → novel-review；建/改设定 → novel-lore；检索梳理 → novel-explore。
+- agent 自主生成的剧情/设定/走向须标「拟」经用户审核；用户明确授权全自动时除外（见 novel-core「创作主权」）。
+- 用户的口语化输入按本书文风润色后用，不照搬字面、不偏离原意和关键词语；用户要求原文写入的除外（见 novel-core「输入润色」）。
 - 写正文前必读：本文件、memory/state.md、memory/threads.md、相关章纲、最近 3 章摘要、上一章末尾。
 - 每章定稿后同步 memory/（规程见 novel-core 技能）。
 
