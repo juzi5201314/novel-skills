@@ -80,12 +80,15 @@ DASH_RE = re.compile(rf"(?<!—)—(?!—)|—{{3,}}|-{{2,}}|(?<=[{CJK}])-(?=[{C
 # AI 味高频表达：命中不等于错误，密度才是问题。说明见 novel-craft/references/anti-ai.md
 AI_PATTERNS = [
     (r"仿佛|宛如|犹如|恍若|恍如", "比喻连接词"),
+    (r"像(?:是)?一[盏个只道团片堵面把柄座]|像被[^，。！？]{0,8}无形|像是[^，。！？]{1,8}也在", "换壳比喻(像一…/像被无形…)"),
+    (r"将熄的灯|破风箱|无形的大?手|潮水般|瘫坐如泥|如死狗|烂泥般", "陈腐死比喻"),
     (r"不禁|不由得|不由自主", "不禁/不由得"),
     (r"缓缓|微微", "缓缓/微微"),
     (r"淡淡", "淡淡"),
     (r"一[丝抹缕]", "一丝/一抹/一缕"),
     (r"嘴角[^，。！？]{0,6}(?:勾起|扬起|上扬|弧度)", "嘴角弧度"),
     (r"[眼眸目瞳][中里底光内][^，。！？]{0,4}闪过", "眼中闪过"),
+    (r"没有温度|不带(?:一丝|半点|任何)?(?:感情|温度|情绪)", "没有温度/不带感情"),
     (r"深吸(?:了)?一口气", "深吸一口气"),
     (r"心(?:中|头|里|下)一(?:凛|紧|动|震|沉|颤)", "心中一凛"),
     (r"(?:冷冷|淡淡|缓缓|轻轻|沉声|低声|柔声)(?:地)?(?:说道|道)", "副词+说道"),
@@ -94,18 +97,23 @@ AI_PATTERNS = [
     (r"落针可闻|鸦雀无声|倒吸一口凉气", "围观套话"),
     (r"这一刻", "这一刻"),
     (r"[他她]知道[，,]", "他知道，"),
+    (r"不知何时", "不知何时(伪细节)"),
+    (r"终究(?:还是|只是|只能)|自始至终", "终究只能/自始至终(旁白腔)"),
     (r"不是[^。！？\n]{1,25}[，,]而是", "不是……而是"),
     (r"不仅仅?是[^。！？\n]{1,25}[，,](?:更|还|也)是", "不仅是……更是"),
+    (r"没有[^，。！？\n]{1,12}[，,]也没有", "没有A，也没有B(端腔句式)"),
+    (r"没等来[^，。！？\n]{0,10}[，,]等来了|来了又去[、，]去了又来", "顶真回环金句腔"),
     (r"命运的齿轮|才刚刚开始|仅仅只是开始|一切才刚刚", "宿命式收尾"),
     (r"难以言喻|无法形容|说不清道不明|前所未有", "无法形容"),
     (r"指节(?:泛白|发白)|喉结(?:上下)?滚动|瞳孔(?:骤然|猛地|微微)?(?:一)?缩", "身体反应套话"),
+    (r"青筋(?:暴起|凸起)|眼眶(?:微微|有些)?泛红|红着眼|[横握]剑冷笑|冷笑一声|擦了又渗", "战损/神态套话"),
     (r"眸(?:子|光|中|底)", "眸子"),
     (r"带着(?:几分|一丝|一抹|些许)", "带着几分"),
     (r"显得(?:格外|十分|异常|有些|尤为)", "显得格外"),
     (r"某种", "某种"),
     (r"与此同时", "与此同时"),
     (r"涌上心头|心头一暖|五味杂陈|百感交集", "情绪套话"),
-    (r"弥漫着|交织|涟漪|璀璨|深邃|低语", "AI 偏爱词"),
+    (r"弥漫着|交织|涟漪|璀璨|深邃|低语|呜咽|苟延|轰然", "AI 偏爱词"),
 ]
 AI_RES = [(re.compile(p), label) for p, label in AI_PATTERNS]
 
@@ -543,6 +551,31 @@ def cmd_lint(a: argparse.Namespace) -> None:
         warns.append(f"段间空行不统一：{tight} 处紧挨、{spaced} 处空一行")
     if wide:
         warns.append(f"连续多个空行：{fmt_lines(wide)}")
+    if len(paras) > 1 and not fw and not spaced:
+        errors.append("缺少段落排版：全文既无段首两个全角空格缩进（　　），也无段间空行，呈密排文字墙")
+
+    # “一句一行”碎段检测（剔除含对白的段落，统计纯叙述段里的句末标点数量）
+    pure_narr = [(n, l.strip()) for n, l in paras if "“" not in l and "「" not in l]
+    if len(pure_narr) >= 5:
+        one_sent = [n for n, s in pure_narr if len(re.findall(r"[。！？!?]+|……", s)) <= 1]
+        if len(one_sent) / len(pure_narr) >= 0.60:
+            warns.append(
+                f"“一句一行”碎段倾向：{len(one_sent)}/{len(pure_narr)} 个纯叙述段只有一句话（平均 {words // len(paras)} 字/段），"
+                f"请将同焦点的连续动作与观察合并为 2–5 句的自然段：{fmt_lines(one_sent)}"
+            )
+        else:
+            # 检测局部连续 4 段以上单句叙述段
+            s_run: list[int] = []
+            one_set = set(one_sent)
+            for n, _ in paras:
+                if n in one_set:
+                    s_run.append(n)
+                else:
+                    if len(s_run) >= 4:
+                        warns.append(f"连续 {len(s_run)} 段为单句叙述（“一句一行”电报体）：{fmt_lines(s_run)}")
+                    s_run = []
+            if len(s_run) >= 4:
+                warns.append(f"连续 {len(s_run)} 段为单句叙述（“一句一行”电报体）：{fmt_lines(s_run)}")
 
     # 逐段检查
     checks = {
@@ -597,6 +630,12 @@ def cmd_lint(a: argparse.Namespace) -> None:
     cv = statistics.pstdev(narr) / statistics.mean(narr) if len(narr) > 1 else 0.0
     quoted = sum(len(m) for m in re.findall(r"“[^”]*”", body))
     per_k = 1000 / max(words, 1)
+    dash_lines = [n for n, l in paras if "——" in l]
+    if len(dash_lines) >= 3 and body.count("——") * per_k > 2.5:
+        warns.append(
+            f"破折号“——”过多（共 {body.count('——')} 处，{body.count('——') * per_k:.1f} 处/千字，"
+            f"警惕句尾旁白补刀腔）：{fmt_lines(dash_lines)}"
+        )
 
     # AI 味
     ai_hits: list[tuple[str, list[int]]] = []
